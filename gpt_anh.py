@@ -14,6 +14,10 @@ import subprocess
 import sys
 
 
+SAFE_FRAMING = ("Modest, wholesome, family-friendly framing: any person stands upright behind the workbench, camera at "
+                "chest height from the front, the bench hides everything below the waist, relaxed neutral pose.")
+
+
 def codex_exe():
     pattern = os.path.join(os.environ["USERPROFILE"], ".vscode", "extensions", "openai.chatgpt-*",
                            "bin", "windows-x86_64", "codex.exe")
@@ -48,15 +52,21 @@ def gen_one(exe, row, img_dir):
     if refs:
         lines.append("Use the attached image(s) as reference: keep the same person, outfit, room, camera angle and "
                      "artwork exactly consistent with them.")
-    lines += ["Image description:", row["prompt"], "",
-              f"Then copy the generated PNG to this exact path (overwrite if it exists): {dest}",
-              "Reply only with the final file path."]
+    tail_lines = ["", f"Then copy the generated PNG to this exact path (overwrite if it exists): {dest}",
+                  "Reply only with the final file path."]
     cmd = [exe, "exec", "--skip-git-repo-check", "--ephemeral", "-s", "workspace-write", "-C", out_dir]
     for r in refs:
         cmd += ["-i", r]
-    # prompt qua stdin: -i nhận nhiều file nên sẽ nuốt mất prompt nếu đặt sau nó
-    res = subprocess.run(cmd, input="\n".join(lines), encoding="utf-8", errors="replace", capture_output=True,
-                         check=False, timeout=900)
+    prompt = row["prompt"]
+    for attempt in range(2):
+        # prompt qua stdin: -i nhận nhiều file nên sẽ nuốt mất prompt nếu đặt sau nó
+        res = subprocess.run(cmd, input="\n".join(lines + ["Image description:", prompt] + tail_lines),
+                             encoding="utf-8", errors="replace", capture_output=True, check=False, timeout=900)
+        if os.path.exists(dest) or "moderation_blocked" not in (res.stdout or "") + (res.stderr or ""):
+            break
+        # bộ lọc an toàn của OpenAI chặn ảnh đầu ra khá ngẫu nhiên với nhân vật mặc quần short: thử lại với khung hình kín đáo
+        print("  bị bộ lọc an toàn chặn, thử lại với khung hình kín đáo hơn...")
+        prompt += (" " + SAFE_FRAMING)
     if not os.path.exists(dest):
         log = (res.stdout or "") + (res.stderr or "")
         tail = "\n".join(l for l in log.strip().splitlines()[-15:])

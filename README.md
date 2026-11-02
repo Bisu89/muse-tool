@@ -160,6 +160,37 @@ Những điều nên biết khi chạy thật:
   Khi đó bạn trả lời Muse trực tiếp trên cửa sổ Opera, tool vẫn tiếp tục chờ video.
 - Khi tool đang chạy, đừng gõ vào khung chat Muse trong cửa sổ đó.
 
+## QA từng clip và tự sửa (`clip_qa` trong config.json)
+
+Mỗi clip Muse trả về được kiểm tra ngay, trước khi gửi clip tiếp theo. Việc kiểm tra mặc định do Claude làm (`"clip_qa": "claude"`),
+đổi thành `"gpt"` thì GPT làm, còn `""` thì tắt:
+
+- Contact sheet 20 khung của clip được so với prompt và với **ảnh khung cuối**. QA đếm số đồ vật, tìm lỗi AI, xem trạng
+  thái cuối có khớp ảnh khung cuối không.
+- **Đạt:** chuyển sang clip sau.
+- **Lỗi chỉ ở mấy giây cuối:** ghi `cat_den` vào `clipN.qa.json`. `ghep.py` sẽ cắt bỏ phần sau giây đó (giữ ít nhất 60% clip),
+  không tốn lượt gen.
+- **Lỗi ở giữa clip:** bản lỗi được đổi tên thành `clipN.mp4.lan1.mp4`. Tool gửi lại Muse với prompt cũ kèm
+  "FIX FROM PREVIOUS ATTEMPT: ..." (câu sửa do QA viết), rồi kiểm tra lại. Số lần gửi lại tối đa là `clip_retries` (mặc định 1).
+- Kết quả từng clip lưu ở `video/clipN.qa.json`. Clip đã đạt, hoặc đã hết lượt gen lại, sẽ được bỏ qua ở lần chạy sau.
+
+## Mỗi series một side chat riêng trên Muse
+
+Đặt file `muse-chat.json` ở thư mục series (hoặc thư mục tập):
+
+```json
+{ "series": "Elise DIY", "url": "" }
+```
+
+Lần đầu chạy, tool tạo side chat mới, gửi một tin giới thiệu ngắn (không gen gì) rồi ghi địa chỉ chat vào `url`.
+Các lần sau, tool mở thẳng chat đó.
+
+Mỗi tin yêu cầu có một mã việc `#job-...`. Tool chỉ nhận video nằm sau đúng tin của mình, và bỏ qua file trùng từng byte
+với clip khác. Trước đây tool từng tải nhầm một clip cũ, vì khung chat Muse load muộn những tin cũ.
+
+Nếu tin đã gửi nhưng tool bị dừng giữa chừng: `python muse_auto.py run --csv ... --only 2 --chi-tai` sẽ chỉ tải video
+Muse đã trả cho lần gửi gần nhất, không gửi gì thêm.
+
 ## Bước 3: ghép
 
 ```

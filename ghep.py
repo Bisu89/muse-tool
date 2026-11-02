@@ -4,7 +4,8 @@
 
 Cột CSV dùng tới: luu_tai (clip), dung_giay (độ dài mong muốn của clip trong video cuối; trống = giữ nguyên),
 che_do (tang_toc = tăng tốc cả clip cho vừa dung_giay, cat = giữ tốc độ và cắt phần đầu clip).
-Mọi clip được đưa về 1080x1920, 30 fps; clip không có tiếng thì chèn khoảng lặng.
+Mọi clip được đưa về 30 fps và cùng khung với clip đầu: dọc 1080x1920, hoặc ngang 1920x1080 nếu clip đầu là ngang.
+Clip không có tiếng thì chèn khoảng lặng.
 """
 import argparse
 import csv
@@ -20,6 +21,14 @@ def probe(path):
     info = json.loads(out)
     has_audio = any(s.get("codec_type") == "audio" for s in info.get("streams", []))
     return float(info["format"]["duration"]), has_audio
+
+
+def frame_size(path):
+    """(rộng, cao) đích: ngang 1920x1080 nếu clip là ngang, còn lại dọc 1080x1920."""
+    out = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=width,height",
+                          "-of", "json", path], capture_output=True, text=True, check=True).stdout
+    s = json.loads(out)["streams"][0]
+    return (1920, 1080) if s["width"] > s["height"] else (1080, 1920)
 
 
 def atempo_chain(speed):
@@ -38,28 +47,44 @@ def build(csv_path, out):
     csv_dir = os.path.dirname(os.path.abspath(csv_path))
     cmd = ["ffmpeg", "-y", "-v", "error"]
     filters, labels = [], []
+    size = None
     for i, row in enumerate(rows):
         clip = os.path.join(csv_dir, row.get("luu_tai") or os.path.join("video", f"doan{row['stt']}.mp4"))
         if not os.path.exists(clip):
             sys.exit(f"thiếu clip: {clip}")
         dur, has_audio = probe(clip)
+        size = size or frame_size(clip)
+        # QA từng clip có thể yêu cầu bỏ phần cuối bị lỗi (cat_den), cắt trước rồi mới tăng tốc
+        qa_json = os.path.splitext(clip)[0] + ".qa.json"
+        cut = None
+        if os.path.exists(qa_json):
+            with open(qa_json, encoding="utf-8") as f:
+                cut = json.load(f).get("cat_den")
+        # cột cat_tu / cat_den trong CSV (chủ dự án chọn tay) ưu tiên hơn cat_den do QA đề xuất
+        if row.get("cat_den"):
+            cut = float(row["cat_den"])
+        start = float(row["cat_tu"]) if row.get("cat_tu") else 0.0
+        end = min(dur, float(cut)) if cut else dur
+        dur = end - start
         target = float(row["dung_giay"]) if row.get("dung_giay") else dur
         mode = row.get("che_do") or "tang_toc"
         cmd += ["-i", clip]
         if mode == "cat":
-            v = f"[{i}:v]trim=0:{target},setpts=PTS-STARTPTS"
-            a = f"[{i}:a]atrim=0:{target},asetpts=PTS-STARTPTS"
+            target = min(target, dur)
+            v = f"[{i}:v]trim={start}:{start + target},setpts=PTS-STARTPTS"
+            a = f"[{i}:a]atrim={start}:{start + target},asetpts=PTS-STARTPTS"
         else:
             speed = dur / target
-            v = f"[{i}:v]setpts=PTS/{speed:.4f}"
-            a = f"[{i}:a]{atempo_chain(speed)},asetpts=PTS-STARTPTS"
-        v += ",scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,fps=30,setsar=1"
+            v = f"[{i}:v]trim={start}:{end},setpts=(PTS-STARTPTS)/{speed:.4f}"
+            a = f"[{i}:a]atrim={start}:{end},asetpts=PTS-STARTPTS,{atempo_chain(speed)}"
+        w, h = size
+        v += f",scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h},fps=30,setsar=1"
         if not has_audio:
             a = f"anullsrc=r=44100:cl=stereo,atrim=0:{target}"
         filters.append(f"{v}[v{i}]")
         filters.append(f"{a},aformat=sample_rates=44100:channel_layouts=stereo[a{i}]")
         labels.append(f"[v{i}][a{i}]")
-        print(f"  clip {row['stt']}: {dur:.1f}s -> {target:.1f}s ({mode})")
+        print(f"  clip {row['stt']}: {start:.1f}-{end:.1f}s ({dur:.1f}s) -> {target:.1f}s ({mode})")
     filters.append(f"{''.join(labels)}concat=n={len(rows)}:v=1:a=1[v][a]")
     cmd += ["-filter_complex", ";".join(filters), "-map", "[v]", "-map", "[a]",
             "-c:v", "libx264", "-crf", "18", "-preset", "medium", "-pix_fmt", "yuv420p",
