@@ -1,0 +1,14 @@
+{
+  "url": "https://muse.ai",
+  "video_spec": "dọc 9:16, 10 giây, timelapse quay thật",
+  "reply_hint": "Chỉ gen đúng 1 clip này, không ghép thêm. Xong thì gửi lại file mp4 trong chat.",
+  "timeout_min": 40,
+  "upload_wait_ms": 8000,
+  "selectors": {
+    "attach_input": "input[type=file]",
+    "message": "textarea[aria-label=\"Message\"]",
+    "remove_attachment": "button[aria-label=\"Remove attachment\"]",
+    "send_key": "Enter",
+    "result_tile": "[aria-label^=\"Open animated video\"]"
+  }
+}

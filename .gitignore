@@ -1,0 +1,11 @@
+# Profile trình duyệt (chứa cookie/phiên đăng nhập) - KHÔNG đẩy lên
+opera-profile/
+
+# Ảnh chụp debug
+_inspect/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
