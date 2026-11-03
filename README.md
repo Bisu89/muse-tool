@@ -53,8 +53,9 @@ Mỗi dòng sẽ được xử lý như sau:
 4. Chờ Muse trả video trong chat.
 5. Tải video về thư mục đã chỉ định.
 
-Tool điều khiển **Opera** bằng Playwright. Opera của tool dùng profile riêng (`opera-profile/`),
-tách biệt với Opera bạn dùng hằng ngày. Bạn chỉ cần đăng nhập Muse một lần.
+Tool điều khiển **Chrome** (hoặc Opera) bằng Playwright, chọn bằng `"browser"` trong `config.json`. Trình duyệt của tool
+dùng profile riêng (`chrome-profile*/` hoặc `opera-profile/`), tách biệt với trình duyệt bạn dùng hằng ngày.
+Bạn chỉ cần đăng nhập Muse một lần cho mỗi profile.
 
 ## Cài đặt (một lần)
 
@@ -62,19 +63,28 @@ tách biệt với Opera bạn dùng hằng ngày. Bạn chỉ cần đăng nh�
 pip install -r requirements.txt
 ```
 
-Không cần chạy `playwright install`, vì tool dùng Opera có sẵn trên máy
-(`%LOCALAPPDATA%\Programs\Opera`).
+Không cần chạy `playwright install`, vì tool dùng Chrome hoặc Opera có sẵn trên máy.
 
 ## Đăng nhập (một lần)
 
-1. Chạy `1-dang-nhap.bat`. Cửa sổ Opera của tool sẽ mở ra.
-2. **Nếu Muse chặn IP:** vào `opera://settings/vpn` trong chính cửa sổ đó và bật VPN của Opera.
+1. Chạy `1-dang-nhap.bat`. Cửa sổ trình duyệt của tool (theo `config.json`) sẽ mở ra.
+2. **Nếu Muse chặn IP (chỉ với Opera):** vào `opera://settings/vpn` trong chính cửa sổ đó và bật VPN của Opera.
    Profile của tool sẽ nhớ cài đặt này.
 3. Vào `https://muse.ai`, đăng nhập bằng số điện thoại hoặc email và nhập mã xác nhận.
    Vào tới khung chat là xong.
 
-Phiên đăng nhập được lưu trong `opera-profile/`. Không chia sẻ thư mục này cho người khác,
+Phiên đăng nhập được lưu trong thư mục profile (`chrome-profile*/` hoặc `opera-profile/`). Không chia sẻ thư mục này cho người khác,
 vì nó chứa phiên đăng nhập tài khoản của bạn.
+
+**Chạy ngầm:** tool gửi tin qua cổng debug nên không kéo cửa sổ Chrome lên trước; bạn cứ thu nhỏ hoặc để cửa sổ khác che.
+Muốn tool kéo cửa sổ lên mỗi lần gửi (để xem nó làm gì) thì thêm `"hien_cua_so": true` vào `config.json`.
+
+**Nhiều tài khoản:** mỗi tài khoản Muse dùng một profile riêng.
+- Trong `config.json`, đặt `"profile"` (tên thư mục, ví dụ `chrome-profile-2`) và `"port"` (cổng debug riêng, ví dụ `9335`).
+- Bỏ hai khóa này thì tool dùng profile mặc định `<browser>-profile/`.
+- Link thread trong `muse-chat.json` của tài khoản cũ không mở được bằng tài khoản mới. Khi đổi tài khoản, xóa `url` trong file đó.
+- `muse-chat.json` của từng series có thể ghi `"profile"`/`"port"` riêng. Nhiều series dùng chung một profile thì mỗi series
+  giữ tab riêng (tab đang mở đúng link chat của series); không có thì tool mở tab mới, không mượn tab của series khác.
 
 ## Chuẩn bị một bộ video
 
@@ -170,8 +180,13 @@ Mỗi clip Muse trả về được kiểm tra ngay, trước khi gửi clip ti�
 - **Đạt:** chuyển sang clip sau.
 - **Lỗi chỉ ở mấy giây cuối:** ghi `cat_den` vào `clipN.qa.json`. `ghep.py` sẽ cắt bỏ phần sau giây đó (giữ ít nhất 60% clip),
   không tốn lượt gen.
-- **Lỗi ở giữa clip:** bản lỗi được đổi tên thành `clipN.mp4.lan1.mp4`. Tool gửi lại Muse với prompt cũ kèm
-  "FIX FROM PREVIOUS ATTEMPT: ..." (câu sửa do QA viết), rồi kiểm tra lại. Số lần gửi lại tối đa là `clip_retries` (mặc định 1).
+- **Lỗi ở giữa clip (clip mình QA trượt):** bản lỗi được đổi tên thành `clipN.mp4.lan1.mp4`. Tool gửi lại yêu cầu đầy đủ
+  (ảnh + prompt) kèm "FIX FROM PREVIOUS ATTEMPT: ..." (câu sửa do QA viết), rồi kiểm tra lại. Số lần gửi lại tối đa là
+  `clip_retries` (mặc định 1).
+- **Gen lại tay một clip đã có:** `python muse_auto.py run --csv "<bo-video>\gen-video.csv" --only 4 6 --lam-lai [--sua "..."]`.
+  Bản cũ được đổi tên thành `clipN.mp4.truoc.mp4`. Câu sửa mặc định lấy `sua_prompt` trong `clipN.qa.json`.
+- **Lỗi phía Muse** ("Delivery not confirmed" dưới tin nhắn mà chưa tạo video): đây mới là lúc chỉ nhắn "render lại"
+  (kèm prompt). Tool chờ 30 giây rồi nhắn, và tính lại thời gian chờ từ đầu. Tối đa `delivery_retries` lần (mặc định 3).
 - Kết quả từng clip lưu ở `video/clipN.qa.json`. Clip đã đạt, hoặc đã hết lượt gen lại, sẽ được bỏ qua ở lần chạy sau.
 
 ## Mỗi series một side chat riêng trên Muse
@@ -194,8 +209,12 @@ Muse đã trả cho lần gửi gần nhất, không gửi gì thêm.
 ## Bước 3: ghép
 
 ```
-python ghep.py --csv "<bo-video>\gen-video.csv" [--out "<bo-video>\video\final.mp4"]
+python ghep.py --csv "<bo-video>\gen-video.csv" [--out "<bo-video>\video\final.mp4"] [--xfade 0.3]
 ```
+
+`--xfade GIÂY`: chuyển cảnh mờ chồng giữa các clip. Dùng khi đã cắt đoạn lỗi và clip sau có nhiều đồ hơn clip trước:
+cú nhảy sẽ trông như cú cắt thời gian chứ không như đồ tự hiện ra. Mặc định 0 là nối thẳng. Nên tăng tốc clip tối đa khoảng
+1,5 lần: clip Muse vốn đã là timelapse, tăng tốc thêm 2–4 lần thì trông như đang tua.
 
 Âm thanh được tăng tốc theo hình bằng `atempo`, nên cao độ giữ nguyên. Clip không có tiếng thì được chèn khoảng lặng.
 

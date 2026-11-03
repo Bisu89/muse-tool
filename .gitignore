@@ -1,5 +1,6 @@
 # Profile trình duyệt (chứa cookie/phiên đăng nhập) - KHÔNG đẩy lên
 opera-profile/
+chrome-profile/
 
 # Ảnh chụp debug
 _inspect/
@@ -9,3 +10,4 @@ __pycache__/
 *.pyc
 .venv/
 venv/
+chrome-profile*/

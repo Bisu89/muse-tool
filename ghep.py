@@ -4,6 +4,7 @@
 
 Cột CSV dùng tới: luu_tai (clip), dung_giay (độ dài mong muốn của clip trong video cuối; trống = giữ nguyên),
 che_do (tang_toc = tăng tốc cả clip cho vừa dung_giay, cat = giữ tốc độ và cắt phần đầu clip).
+--xfade GIÂY: chuyển cảnh mờ chồng giữa các clip (để cú cắt thời gian không trông như đồ vật tự hiện ra); mặc định nối thẳng.
 Mọi clip được đưa về 30 fps và cùng khung với clip đầu: dọc 1080x1920, hoặc ngang 1920x1080 nếu clip đầu là ngang.
 Clip không có tiếng thì chèn khoảng lặng.
 """
@@ -41,12 +42,12 @@ def atempo_chain(speed):
     return ",".join(parts)
 
 
-def build(csv_path, out):
+def build(csv_path, out, xfade=0.0):
     with open(csv_path, encoding="utf-8-sig", newline="") as f:
         rows = list(csv.DictReader(f))
     csv_dir = os.path.dirname(os.path.abspath(csv_path))
     cmd = ["ffmpeg", "-y", "-v", "error"]
-    filters, labels = [], []
+    filters, labels, lens = [], [], []
     size = None
     for i, row in enumerate(rows):
         clip = os.path.join(csv_dir, row.get("luu_tai") or os.path.join("video", f"doan{row['stt']}.mp4"))
@@ -84,8 +85,20 @@ def build(csv_path, out):
         filters.append(f"{v}[v{i}]")
         filters.append(f"{a},aformat=sample_rates=44100:channel_layouts=stereo[a{i}]")
         labels.append(f"[v{i}][a{i}]")
+        lens.append(target)
         print(f"  clip {row['stt']}: {start:.1f}-{end:.1f}s ({dur:.1f}s) -> {target:.1f}s ({mode})")
-    filters.append(f"{''.join(labels)}concat=n={len(rows)}:v=1:a=1[v][a]")
+    if xfade > 0 and len(rows) > 1:
+        # mỗi chỗ nối chồng xfade giây: offset = độ dài đã ghép trừ xfade
+        v_prev, a_prev, total = "[v0]", "[a0]", lens[0]
+        for i in range(1, len(rows)):
+            d = min(xfade, lens[i - 1] / 2, lens[i] / 2)
+            v_out = "[v]" if i == len(rows) - 1 else f"[vx{i}]"
+            a_out = "[a]" if i == len(rows) - 1 else f"[ax{i}]"
+            filters.append(f"{v_prev}[v{i}]xfade=transition=fade:duration={d:.3f}:offset={total - d:.3f}{v_out}")
+            filters.append(f"{a_prev}[a{i}]acrossfade=d={d:.3f}{a_out}")
+            v_prev, a_prev, total = v_out, a_out, total + lens[i] - d
+    else:
+        filters.append(f"{''.join(labels)}concat=n={len(rows)}:v=1:a=1[v][a]")
     cmd += ["-filter_complex", ";".join(filters), "-map", "[v]", "-map", "[a]",
             "-c:v", "libx264", "-crf", "18", "-preset", "medium", "-pix_fmt", "yuv420p",
             "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", out]
@@ -99,9 +112,10 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--csv", required=True)
     ap.add_argument("--out")
+    ap.add_argument("--xfade", type=float, default=0.0, help="giây chuyển cảnh mờ giữa các clip (mặc định 0 = nối thẳng)")
     a = ap.parse_args()
     out = a.out or os.path.join(os.path.dirname(os.path.abspath(a.csv)), "video", "final.mp4")
-    build(a.csv, out)
+    build(a.csv, out, a.xfade)
 
 
 if __name__ == "__main__":

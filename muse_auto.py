@@ -24,15 +24,29 @@ import urllib.request
 from playwright.sync_api import sync_playwright
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
-PROFILE = os.path.join(ROOT, "opera-profile")
 CONFIG = os.path.join(ROOT, "config.json")
-PORT = 9333
+# config.json "browser": "opera" (mặc định) hoặc "chrome"; mỗi trình duyệt một profile và một cổng debug riêng.
+# "profile"/"port" chọn profile khác (vd. chrome-profile-2, cổng 9335) để đăng nhập tài khoản Muse khác
+_CFG = json.load(open(CONFIG, encoding="utf-8"))
+BROWSER = _CFG.get("browser", "opera")
+PROFILE_NAME = _CFG.get("profile", f"{BROWSER}-profile")
+PROFILE = os.path.join(ROOT, PROFILE_NAME)
+PORT = int(_CFG.get("port", 9334 if BROWSER == "chrome" else 9333))
 
 
 def opera_exe():
     base = os.path.join(os.environ["LOCALAPPDATA"], "Programs", "Opera")
     versions = sorted(glob.glob(os.path.join(base, "*", "opera.exe")))
     return versions[-1] if versions else os.path.join(base, "opera.exe")
+
+
+def chrome_exe():
+    for base in (os.environ.get("PROGRAMFILES", ""), os.environ.get("PROGRAMFILES(X86)", ""),
+                 os.environ.get("LOCALAPPDATA", "")):
+        path = os.path.join(base, "Google", "Chrome", "Application", "chrome.exe")
+        if os.path.exists(path):
+            return path
+    sys.exit("Không tìm thấy chrome.exe")
 
 
 def cdp_ready():
@@ -45,7 +59,7 @@ def cdp_ready():
 
 def start_opera(url):
     if not cdp_ready():
-        subprocess.Popen([opera_exe(), f"--remote-debugging-port={PORT}", f"--user-data-dir={PROFILE}",
+        subprocess.Popen([chrome_exe() if BROWSER == "chrome" else opera_exe(), f"--remote-debugging-port={PORT}", f"--user-data-dir={PROFILE}",
                           "--disable-quic", "--disable-background-timer-throttling",
                           "--disable-renderer-backgrounding", "--disable-backgrounding-occluded-windows",
                           "--no-first-run", "--no-default-browser-check", url])
@@ -54,7 +68,7 @@ def start_opera(url):
                 break
             time.sleep(0.5)
         else:
-            sys.exit("Không kết nối được Opera (cổng debug không mở).")
+            sys.exit(f"Không kết nối được {BROWSER} (cổng debug không mở).")
 
 
 def load_config():
@@ -72,7 +86,7 @@ def connect(p, url):
 
 def cmd_login(cfg):
     start_opera(cfg["url"])
-    print("Opera đã mở. Bật VPN Opera nếu bị chặn IP, đăng nhập Muse. Phiên được lưu trong opera-profile/")
+    print(f"{BROWSER} đã mở. Đăng nhập Muse (Opera: bật VPN nếu bị chặn IP). Phiên được lưu trong {PROFILE_NAME}/")
 
 
 def cmd_inspect(cfg, out, now):
@@ -115,7 +129,10 @@ TILES_AFTER_JS = """([anchor, pick, sel, ph, marker]) => {
                       (!stop || (stop.compareDocumentPosition(e) & Node.DOCUMENT_POSITION_PRECEDING));
   const holders = [...document.querySelectorAll(ph)].filter(inside);
   if (holders.length) holders[0].scrollIntoView({block: 'center'});
-  return {found: true, tiles: [...document.querySelectorAll(sel)].filter(inside).map(t => {
+  let undelivered = 0;
+  const w3 = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+  while ((n = w3.nextNode())) if (n.nodeValue.includes('Delivery not confirmed') && inside(n)) undelivered++;
+  return {found: true, undelivered, generating: holders.length > 0, tiles: [...document.querySelectorAll(sel)].filter(inside).map(t => {
     const v = t.querySelector('video') || t.parentElement.querySelector('video');
     return {label: t.getAttribute('aria-label') || '', src: v ? (v.currentSrc || v.src || '') : ''};
   })};
@@ -139,8 +156,18 @@ def wait_video(page, cfg, row, anchor, pick):
                 others[file_md5(fh.read())] = os.path.basename(f)
     rejected = set()
     deadline = time.time() + cfg.get("timeout_min", 40) * 60
+    flagged_at = None
     while time.time() < deadline:
         r = page.evaluate(TILES_AFTER_JS, [anchor, pick, sel["result_tile"], sel["result_placeholder"], MARKER])
+        # Muse báo "Delivery not confirmed" (mạng chập chờn) thì AI không nhận được yêu cầu (cả ảnh lẫn prompt):
+        # báo cho run_row gửi lại nguyên tin yêu cầu kèm ảnh. Nhắn "render lại" không kèm ảnh thì Muse không gen được.
+        if r.get("undelivered", 0) and not r.get("generating") and not any(t["src"] for t in r["tiles"]):
+            if flagged_at is None:
+                flagged_at = time.time()
+            elif time.time() - flagged_at >= 30:
+                raise DeliveryFailed(anchor)
+        else:
+            flagged_at = None
         for t in r["tiles"]:
             if not t["src"] or t["label"] in rejected:
                 continue
@@ -157,6 +184,10 @@ def wait_video(page, cfg, row, anchor, pick):
             return True
         page.wait_for_timeout(15_000)
     raise TimeoutError("quá thời gian chờ Muse trả video")
+
+
+class DeliveryFailed(Exception):
+    """Muse báo 'Delivery not confirmed' cho tin yêu cầu và không gen gì."""
 
 
 def fetch_video(page, src):
@@ -178,7 +209,7 @@ def build_message(row, cfg, job=""):
     if names("khung_cuoi"):
         lines.append(f"- Khung hình CUỐI: dùng đúng ảnh {', '.join(names('khung_cuoi'))}.")
     else:
-        lines.append("- Không có khung hình cuối cố định: máy quay chuyển động tự do theo prompt.")
+        lines.append("- Không có khung hình cuối cố định: diễn biến và máy quay làm đúng theo prompt.")
     if names("anh_tham_chieu"):
         lines.append(f"- Ảnh tham chiếu (giữ đúng nhân vật/chất liệu): {', '.join(names('anh_tham_chieu'))}.")
     if row.get("am_thanh"):
@@ -201,8 +232,21 @@ def clear_composer(page, sel):
 
 
 def run_row(page, cfg, row, img_dir, dry):
+    """Gửi 1 clip; Muse báo 'Delivery not confirmed' thì gửi lại nguyên tin (ảnh + prompt, mã việc mới)."""
+    for attempt in range(cfg.get("delivery_retries", 3) + 1):
+        try:
+            return send_row(page, cfg, row, img_dir, dry)
+        except DeliveryFailed:
+            if attempt >= cfg.get("delivery_retries", 3):
+                raise RuntimeError("Muse báo 'Delivery not confirmed' quá số lần gửi lại")
+            print(f"  Muse báo 'Delivery not confirmed', gửi lại nguyên yêu cầu kèm ảnh (lần {attempt + 1})")
+
+
+def send_row(page, cfg, row, img_dir, dry):
     sel = cfg["selectors"]
-    page.bring_to_front()
+    # mặc định chạy ngầm: Playwright gửi qua cổng debug nên không cần kéo cửa sổ Chrome lên trước
+    if cfg.get("hien_cua_so"):
+        page.bring_to_front()
     page.wait_for_selector(sel["message"], timeout=60_000)
     clear_composer(page, sel)
 
@@ -247,6 +291,26 @@ def fetch_only(page, cfg, row):
     first = row.get("khung_dau", "").split(";")[0].strip()
     print("  chỉ tải: tìm câu trả lời cho lần gửi gần nhất...")
     return wait_video(page, cfg, row, f"{MARKER} dùng đúng ảnh {first}", "last")
+
+
+def last_frame_of(rows, stt, img_dir):
+    """Khung đầu "@cuoi:N": trích khung hình cuối của clip N (tới cat_den nếu đã cắt) vào anh/, trả về tên file.
+    Clip sau bắt đầu đúng chỗ clip trước dừng, nên không cần ảnh khung cuối ép Muse (ép thì đồ hay hiện hàng loạt)."""
+    src = next(r for r in rows if r["stt"] == stt)
+    cut = src.get("cat_den")
+    if not cut and os.path.exists(clip_qa_path(src)):
+        with open(clip_qa_path(src), encoding="utf-8") as f:
+            cut = json.load(f).get("cat_den")
+    if not cut:
+        out = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0",
+                              src["luu_tai"]], capture_output=True, text=True, check=True).stdout
+        cut = float(out.strip())
+    # tên mang tên tập (thư mục cha của anh/) để Muse không lẫn ảnh giữa các tập
+    name = f"{os.path.basename(os.path.dirname(os.path.abspath(img_dir)))}-clip{stt}-cuoi.png"
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-ss", f"{max(float(cut) - 0.1, 0):.2f}", "-i", src["luu_tai"],
+                    "-frames:v", "1", os.path.join(img_dir, name)], check=True)
+    print(f"  khung đầu = khung cuối clip {stt} (giây {float(cut):.1f}): {name}")
+    return name
 
 
 def clip_qa_path(row):
@@ -295,6 +359,14 @@ def find_chat_cfg(csv_dir):
     return None, None
 
 
+def use_series_profile(chat):
+    """muse-chat.json có thể ghi "profile"/"port" riêng: mỗi series dùng profile (tài khoản Muse) của mình."""
+    global PROFILE, PORT
+    if chat and chat.get("profile"):
+        PROFILE = os.path.join(ROOT, chat["profile"])
+        PORT = int(chat.get("port", PORT))
+
+
 def open_series_chat(page, cfg, chat_path, chat):
     sel = cfg["selectors"]
     if chat.get("url"):
@@ -332,7 +404,7 @@ def muse_page(ctx, url):
     return pg
 
 
-def cmd_run(cfg, csv_path, only, dry, force, img_dir, chi_tai=False):
+def cmd_run(cfg, csv_path, only, dry, force, img_dir, chi_tai=False, lam_lai=False, sua=""):
     with open(csv_path, encoding="utf-8-sig", newline="") as f:
         rows = list(csv.DictReader(f))
     csv_dir = os.path.dirname(os.path.abspath(csv_path))
@@ -342,20 +414,43 @@ def cmd_run(cfg, csv_path, only, dry, force, img_dir, chi_tai=False):
         dest = row.get("luu_tai") or os.path.join("video", f"doan{row['stt']}.mp4")
         row["luu_tai"] = os.path.join(csv_dir, dest)
         os.makedirs(os.path.dirname(row["luu_tai"]), exist_ok=True)
+    chat_path, chat = find_chat_cfg(csv_dir)
+    use_series_profile(chat)
     with sync_playwright() as p:
         _, ctx, _ = connect(p, cfg["url"])
-        chat_path, chat = find_chat_cfg(csv_dir)
-        # series có thể đặt video_spec / reply_hint riêng (ví dụ khung ngang 16:9)
-        cfg = {**cfg, **{k: chat[k] for k in ("video_spec", "reply_hint") if chat and k in chat}}
+        # series có thể đặt video_spec / reply_hint / clip_qa riêng (ví dụ khung ngang 16:9)
+        cfg = {**cfg, **{k: chat[k] for k in ("video_spec", "reply_hint", "clip_qa") if chat and k in chat}}
         # dùng lại tab đang mở sẵn side chat của series (không mở tab mới, không tải lại nếu đã đúng chat)
         same = [pg for pg in ctx.pages if chat and chat.get("url") and pg.url.startswith(chat["url"])]
-        page = same[0] if same else muse_page(ctx, cfg["url"])
+        # series có side chat thì không mượn tab Muse của series khác (nhiều series dùng chung một profile): mở tab mới
+        page = same[0] if same else (ctx.new_page() if chat and chat.get("url") else muse_page(ctx, cfg["url"]))
         if chat and not same:
             open_series_chat(page, cfg, chat_path, chat)
         for row in rows:
             if only and row["stt"] not in only:
                 continue
             print(f"[{row['stt']}] {row.get('doan', '')}")
+            if row.get("khung_dau", "").startswith("@cuoi:") and not dry:
+                row["khung_dau"] = last_frame_of(rows, row["khung_dau"][6:].strip(), img_dir)
+            if lam_lai and not dry:
+                # chủ dự án chọn tay clip cần làm lại: gửi lại yêu cầu đầy đủ (ảnh + prompt) kèm câu sửa, rồi QA lại từ đầu.
+                # câu sửa: --sua, nếu không có thì lấy sua_prompt QA đã ghi trong clipN.qa.json
+                fix = sua
+                if os.path.exists(clip_qa_path(row)):
+                    with open(clip_qa_path(row), encoding="utf-8") as f:
+                        fix = fix or json.load(f).get("sua_prompt", "")
+                    os.remove(clip_qa_path(row))
+                if os.path.exists(row["luu_tai"]):
+                    os.replace(row["luu_tai"], row["luu_tai"] + ".truoc.mp4")
+                try:
+                    run_row(page, cfg, dict(row, prompt=row["prompt"] + (" FIX FROM PREVIOUS ATTEMPT: " + fix if fix else "")),
+                            img_dir, False)
+                    if cfg.get("clip_qa"):
+                        check_and_fix(page, cfg, row, img_dir)
+                except Exception as e:
+                    print(f"  lỗi: {e}")
+                    return False
+                continue
             have = os.path.exists(row["luu_tai"]) and not force and not dry
             if have and os.path.exists(clip_qa_path(row)):
                 with open(clip_qa_path(row), encoding="utf-8") as f:
@@ -415,6 +510,8 @@ def main():
     ap.add_argument("--dry", action="store_true", help="gán ảnh + prompt nhưng không bấm tạo")
     ap.add_argument("--force", action="store_true", help="tạo lại kể cả khi đã có video")
     ap.add_argument("--chi-tai", action="store_true", help="run: không gửi, chỉ tải video Muse đã trả cho lần gửi gần nhất")
+    ap.add_argument("--lam-lai", action="store_true", help="run: gen lại các clip trong --only, gửi lại ảnh + prompt kèm câu sửa")
+    ap.add_argument("--sua", default="", help="run --lam-lai: câu sửa lỗi (mặc định lấy sua_prompt trong clipN.qa.json)")
     ap.add_argument("--now", action="store_true", help="inspect: chụp trang đang mở ngay, không chờ Enter")
     ap.add_argument("--out", default=os.path.join(ROOT, "_inspect"))
     a = ap.parse_args()
@@ -428,7 +525,7 @@ def main():
     else:
         if not a.csv:
             sys.exit("cần --csv")
-        cmd_run(cfg, a.csv, a.only, a.dry, a.force, a.anh, a.chi_tai)
+        cmd_run(cfg, a.csv, a.only, a.dry, a.force, a.anh, a.chi_tai, a.lam_lai, a.sua)
 
 
 if __name__ == "__main__":

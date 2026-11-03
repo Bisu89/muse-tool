@@ -1,4 +1,7 @@
 {
+  "browser": "chrome",
+  "profile": "chrome-profile-2",
+  "port": 9335,
   "url": "https://muse.ai",
   "video_spec": "dọc 9:16, 10 giây, timelapse quay thật",
   "reply_hint": "Chỉ gen đúng 1 clip này, không ghép thêm. Xong thì gửi lại file mp4 trong chat.",
