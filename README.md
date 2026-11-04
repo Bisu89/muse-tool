@@ -6,7 +6,7 @@ Tool chạy 4 bước:
    của VS Code, không cần API key.
 2. **Gen video bằng Muse** (`muse_auto.py`): gửi ảnh và prompt cho Muse qua khung chat web, rồi tải từng clip về.
 3. **Ghép** (`ghep.py`): tăng tốc hoặc cắt từng clip theo CSV, đưa về 1080×1920, 30 fps, rồi nối thành `video/final.mp4`.
-4. **QA** (`qa.py`): kiểm tra kỹ thuật, sau đó cho **GPT và Claude** chấm điểm theo cùng một thang, xuất báo cáo.
+4. **QA** (`qa.py`): kiểm tra kỹ thuật, sau đó cho **GPT** chấm điểm (mặc định; Claude chỉ chấm khi bật), xuất báo cáo.
 
 Thả **thư mục bộ video** vào `4-tu-dong-het.bat` để chạy cả 4 bước liền nhau. Bước nào đã có kết quả
 (ảnh, clip) thì tool bỏ qua.
@@ -172,8 +172,13 @@ Những điều nên biết khi chạy thật:
 
 ## QA từng clip và tự sửa (`clip_qa` trong config.json)
 
-Mỗi clip Muse trả về được kiểm tra ngay, trước khi gửi clip tiếp theo. Việc kiểm tra mặc định do Claude làm (`"clip_qa": "claude"`),
-đổi thành `"gpt"` thì GPT làm, còn `""` thì tắt:
+Mỗi clip Muse trả về được kiểm tra ngay, trước khi gửi clip tiếp theo. Việc kiểm tra mặc định do GPT làm (`"clip_qa": "gpt"`),
+đổi thành `"claude"` thì Claude làm, còn `""` thì tắt.
+
+**Model GPT** (từ 2026-11-04): mọi lệnh gọi Codex (chấm clip, chấm cả video, gen ảnh) dùng `gpt_model` và `gpt_effort`
+trong `config.json`, mặc định `gpt-6.1-sol` mức `high`. Có model mới thì chỉ cần sửa 2 dòng đó.
+
+Cách QA một clip:
 
 - Contact sheet 20 khung của clip được so với prompt và với **ảnh khung cuối**. QA đếm số đồ vật, tìm lỗi AI, xem trạng
   thái cuối có khớp ảnh khung cuối không.
@@ -218,20 +223,20 @@ cú nhảy sẽ trông như cú cắt thời gian chứ không như đồ tự h
 
 Âm thanh được tăng tốc theo hình bằng `atempo`, nên cao độ giữ nguyên. Clip không có tiếng thì được chèn khoảng lặng.
 
-## Bước 4: QA (GPT + Claude chấm điểm)
+## Bước 4: QA (GPT chấm điểm)
 
 ```
 python qa.py --video "<bo-video>\video\final.mp4" --ref "<bo-video>\goc.mp4" --csv "<bo-video>\gen-video.csv"
-python qa.py --video "..." --chi gpt        # chỉ cho một bên chấm
+python qa.py --video "..." --chi claude     # cho bên khác chấm (mặc định theo final_qa trong config.json)
 ```
 
 - **Kiểm tra kỹ thuật** (tự động, không tốn token): độ phân giải 1080×1920, fps từ 24 trở lên, thời lượng 8–90 giây,
   có âm thanh (lớn hơn -50 dB).
 - **Contact sheet:** 20 khung hình đều nhau của video cần chấm, và của video gốc nếu có `--ref`.
-- **Hai bên chấm độc lập:**
-  - GPT chấm qua `codex exec`, dùng tài khoản ChatGPT.
-  - Claude chấm qua `claude.exe -p` của extension Claude Code.
-- **Thang điểm:** 7 tiêu chí, mỗi tiêu chí 1–10, quy về thang 100. **Đạt khi điểm trung bình hai bên từ 70 trở lên
+- **Ai chấm:** `final_qa` trong `config.json`: `"gpt"` (mặc định), `"claude"` hoặc `"ca_hai"`.
+  - GPT chấm qua `codex exec`, dùng tài khoản ChatGPT, model theo `gpt_model`/`gpt_effort`.
+  - Claude chấm qua `claude.exe -p` của extension Claude Code (chỉ khi bật, tốn token Claude).
+- **Thang điểm:** 7 tiêu chí, mỗi tiêu chí 1–10, quy về thang 100. **Đạt khi điểm (trung bình các bên chấm) từ 70 trở lên
   và phần kỹ thuật đạt hết.**
 
 | Tiêu chí | Chấm cái gì |

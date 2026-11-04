@@ -1,4 +1,4 @@
-"""QA video: kiểm tra kỹ thuật bằng ffprobe + cho GPT (Codex) và Claude chấm theo cùng một thang điểm.
+"""QA video: kiểm tra kỹ thuật bằng ffprobe + cho AI chấm theo một thang điểm (mặc định chỉ GPT, xem final_qa trong config.json).
 
   python qa.py --video <final.mp4> [--ref <video-goc.mp4>] [--csv <gen-video.csv>] [--chi gpt|claude]
 
@@ -24,6 +24,17 @@ TIEU_CHI = [
 ]
 DAT = 70  # điểm đạt trên thang 100
 SO_O = 20
+
+ROOT = os.path.dirname(os.path.abspath(__file__))
+try:
+    with open(os.path.join(ROOT, "config.json"), encoding="utf-8") as _f:
+        _CFG = json.load(_f)
+except OSError:
+    _CFG = {}
+# GPT chấm và duyệt bằng model mới nhất, suy luận nhẹ cho đỡ tốn token (config.json: gpt_model, gpt_effort)
+GPT_ARGS = ["-m", _CFG.get("gpt_model", "gpt-6.1-sol"), "-c", f'model_reasoning_effort="{_CFG.get("gpt_effort", "low")}"']
+# ai chấm cả video: "gpt" (mặc định), "claude" hoặc "ca_hai"
+FINAL_QA = _CFG.get("final_qa", "gpt")
 
 
 def find_exe(pattern):
@@ -104,7 +115,7 @@ def ask_gpt(prompt, images, work):
     if not exe:
         raise RuntimeError("không tìm thấy codex.exe")
     last = os.path.join(work, "gpt-raw.txt")
-    cmd = [exe, "exec", "--skip-git-repo-check", "--ephemeral", "-s", "read-only", "-C", work, "-o", last]
+    cmd = [exe, "exec", "--skip-git-repo-check", "--ephemeral", *GPT_ARGS, "-s", "read-only", "-C", work, "-o", last]
     for img in images:
         cmd += ["-i", img]
     subprocess.run(cmd, input=prompt, encoding="utf-8", stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
@@ -173,7 +184,7 @@ def ask_raw(ai, prompt, images, work, tag):
     if ai == "gpt":
         exe = find_exe(os.path.join("openai.chatgpt-*", "bin", "windows-x86_64", "codex.exe"))
         last = os.path.join(work, f"{tag}-gpt-raw.txt")
-        cmd = [exe, "exec", "--skip-git-repo-check", "--ephemeral", "-s", "read-only", "-C", work, "-o", last]
+        cmd = [exe, "exec", "--skip-git-repo-check", "--ephemeral", *GPT_ARGS, "-s", "read-only", "-C", work, "-o", last]
         for img in images:
             cmd += ["-i", img]
         subprocess.run(cmd, input=prompt, encoding="utf-8", stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
@@ -240,6 +251,8 @@ def run(video, ref=None, csv_path=None, chi=None, out_dir=None):
         with open(csv_path, encoding="utf-8-sig", newline="") as f:
             script = "\n".join(f"{r['stt']}. {r.get('doan', '')}: {r['prompt']}" for r in csv.DictReader(f))
     prompt = build_prompt(sheet, ref_sheet, dur, ref_dur, script)
+    if chi is None and FINAL_QA != "ca_hai":
+        chi = FINAL_QA
     results = {}
     for name, fn in (("GPT", ask_gpt), ("Claude", ask_claude)):
         if chi and chi.lower() != name.lower():

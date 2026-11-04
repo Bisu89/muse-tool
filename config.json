@@ -8,6 +8,9 @@
   "timeout_min": 40,
   "upload_wait_ms": 8000,
   "clip_qa": "claude",
+  "final_qa": "claude",
+  "gpt_model": "gpt-6.1-sol",
+  "gpt_effort": "low",
   "clip_retries": 1,
   "selectors": {
     "attach_input": "input[type=file]",

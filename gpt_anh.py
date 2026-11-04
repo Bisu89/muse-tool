@@ -13,6 +13,8 @@ import os
 import subprocess
 import sys
 
+from qa import GPT_ARGS  # cùng model và mức suy luận với phần chấm (config.json)
+
 
 SAFE_FRAMING = ("Modest, wholesome, family-friendly framing: any person stands upright behind the workbench, camera at "
                 "chest height from the front, the bench hides everything below the waist, relaxed neutral pose.")
@@ -54,7 +56,7 @@ def gen_one(exe, row, img_dir):
                      "artwork exactly consistent with them.")
     tail_lines = ["", f"Then copy the generated PNG to this exact path (overwrite if it exists): {dest}",
                   "Reply only with the final file path."]
-    cmd = [exe, "exec", "--skip-git-repo-check", "--ephemeral", "-s", "workspace-write", "-C", out_dir]
+    cmd = [exe, "exec", "--skip-git-repo-check", "--ephemeral", *GPT_ARGS, "-s", "workspace-write", "-C", out_dir]
     for r in refs:
         cmd += ["-i", r]
     prompt = row["prompt"]
